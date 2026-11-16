@@ -360,15 +360,19 @@ function maskForEmphasis(lexer, src) {
     };
     masked = masked.replace(re, replaceOne);
   }
-  masked = masked.replace(R_INLINE.anyPunctuationOutsideCode, (whole, ticks, punct) => {
-    if (punct) return '+'.repeat(whole.length);
-    if (ticks) return ticks + whole.slice(ticks.length, -ticks.length).replace(/`/g, '+') + ticks;
-    return whole;
-  });
-  masked = masked.replace(R_INLINE.blockSkip, (whole, _pre, ticks) => {
-    const keep = ticks ? ticks.length : 0;
-    return whole.slice(0, keep) + '[' + 'a'.repeat(whole.length - keep - 2) + ']';
-  });
+  if (masked.includes('`') || masked.includes('\\')) {
+    masked = masked.replace(R_INLINE.anyPunctuationOutsideCode, (whole, ticks, punct) => {
+      if (punct) return '+'.repeat(whole.length);
+      if (ticks) return ticks + whole.slice(ticks.length, -ticks.length).replace(/`/g, '+') + ticks;
+      return whole;
+    });
+  }
+  if (masked.includes('[') || masked.includes('`') || masked.includes('<')) {
+    masked = masked.replace(R_INLINE.blockSkip, (whole, _pre, ticks) => {
+      const keep = ticks ? ticks.length : 0;
+      return whole.slice(0, keep) + '[' + 'a'.repeat(whole.length - keep - 2) + ']';
+    });
+  }
   return masked;
 }
 
@@ -656,10 +660,18 @@ class MdLexer {
         const htmlAt = R_OTHER.htmlBeginRegex(contentIndent);
         const quoteAt = R_OTHER.blockquoteBeginRegex(contentIndent);
         for (; src;) {
-          const line = src.split('\n', 1)[0];
-          const expanded = line.replace(R_OTHER.leadingSpaceTab, (ws) => expandTabs(ws));
-          if (fenceAt.test(line) || headingAt.test(line) || htmlAt.test(line) || quoteAt.test(line) || nextBullet.test(line) || hrAt.test(line)) break;
-          if (expanded.search(R_OTHER.nonSpaceChar) >= contentIndent || !line.trim()) {
+          const nl = src.indexOf('\n');
+          const line = nl < 0 ? src : src.slice(0, nl);
+          const expanded = line.indexOf('\t') < 0 ? line : line.replace(R_OTHER.leadingSpaceTab, (ws) => expandTabs(ws));
+          const firstNonSpace = expanded.search(R_OTHER.nonSpaceChar);
+          const isBlank = !line.trim();
+          if (firstNonSpace >= 0) {
+            const c = expanded[firstNonSpace];
+            if (c === '`' || c === '~' || c === '#' || c === '<' || c === '>' || c === '-' || c === '_' || c === '*' || c === '+' || (c >= '0' && c <= '9')) {
+              if (fenceAt.test(line) || headingAt.test(line) || htmlAt.test(line) || quoteAt.test(line) || nextBullet.test(line) || hrAt.test(line)) break;
+            }
+          }
+          if (firstNonSpace >= contentIndent || isBlank) {
             itemText += '\n' + expanded.slice(contentIndent);
           } else {
             if (firstBlank || afterBullet.replace(R_OTHER.tabCharGlobal, '    ').search(R_OTHER.nonSpaceChar) >= 4 || fenceAt.test(afterBullet) || headingAt.test(afterBullet) || htmlAt.test(afterBullet) || hrAt.test(afterBullet)) break;
@@ -667,10 +679,9 @@ class MdLexer {
             const lazy = asSetext ? `    ${expanded.replace(/^ {0,3}/, '')}` : line;
             itemText += '\n' + lazy;
           }
-          const wasBlank = !line.trim();
           src = src.substring(line.length + 1);
           afterBullet = expanded.slice(contentIndent);
-          firstBlank = wasBlank;
+          firstBlank = isBlank;
         }
       }
       const itemRaw = input.slice(itemStart, consumed());
